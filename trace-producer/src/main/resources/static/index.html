@@ -27,7 +27,7 @@
           <span id="status-indicator" class="h-3 w-3 rounded-full bg-slate-500"></span>
           <h1 class="text-2xl font-bold tracking-tight text-white">TraceMesh <span class="font-mono text-lg text-accentBlue">SRE Pipeline</span></h1>
         </div>
-        <p class="mt-2 text-xs text-slate-400">Kafka → Spark Structured Streaming → HDFS Parquet → Hive</p>
+        <p class="mt-2 text-xs text-slate-400">Kafka → Spark → Live Metrics API · HDFS Parquet → Hive history</p>
         <p id="pipeline-status" role="status" class="mt-1 text-xs text-slate-400">Connecting to telemetry pipeline…</p>
       </div>
       <section class="flex items-center gap-4 rounded-lg border border-cardBorder bg-cardBg p-3">
@@ -70,7 +70,7 @@
           <span class="rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-400">Refresh every 3 seconds</span>
         </div>
         <div class="relative h-72"><canvas id="latencyChart" aria-label="P99 latency over time by service"></canvas></div>
-        <p id="chart-empty" class="mt-3 text-center text-sm text-slate-500">Waiting for the first persisted streaming windows…</p>
+        <p id="chart-empty" class="mt-3 text-center text-sm text-slate-500">Waiting for the first processed Spark windows…</p>
       </article>
       <article class="rounded-lg border border-cardBorder bg-cardBg p-5">
         <h2 class="mb-4 text-sm font-bold uppercase tracking-wider text-slate-300">SLA incident feed</h2>
@@ -91,7 +91,7 @@
             <tr><th class="p-3">Service</th><th class="p-3">Latest P99</th><th class="p-3">Average</th><th class="p-3">Requests</th><th class="p-3">Server errors</th><th class="p-3">Status</th></tr>
           </thead>
           <tbody id="service-matrix" class="divide-y divide-cardBorder">
-            <tr><td class="p-4 text-center text-slate-500" colspan="6">Waiting for live metrics from Hive…</td></tr>
+            <tr><td class="p-4 text-center text-slate-500" colspan="6">Waiting for live metrics from Spark…</td></tr>
           </tbody>
         </table>
       </div>
@@ -296,8 +296,8 @@
         renderMetrics(data);
         setPipelineStatus(true, 'Metrics API reachable · checked ' + new Date().toLocaleTimeString());
       } catch (error) {
-        setPipelineStatus(false, 'Telemetry unavailable · check producer, Hive, and Spark logs');
-        if (latestMetrics.length === 0) renderEmptyState('Metrics API unavailable. No synthetic fallback data is shown.');
+        setPipelineStatus(false, 'Telemetry unavailable · check producer, Spark, Kafka, and HDFS logs');
+        if (latestMetrics.length === 0) renderEmptyState('Live metrics API unavailable. No synthetic fallback data is shown.');
       } finally {
         metricsInFlight = false;
       }
