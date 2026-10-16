@@ -69,7 +69,7 @@ public class SparkStreamingApp {
                         col("serviceName")
                 )
                 .agg(
-                        expr("percentile_approx(executionDurationMs, 0.99)").as("p99_latency_ms"),
+                        expr("percentile_approx(executionDurationMs, 0.99)").cast(DataTypes.DoubleType).as("p99_latency_ms"),
                         avg("executionDurationMs").as("avg_latency_ms"),
                         count("*").as("total_requests"),
                         sum(when(col("statusCode").geq(500), 1).otherwise(0)).as("error_count")
