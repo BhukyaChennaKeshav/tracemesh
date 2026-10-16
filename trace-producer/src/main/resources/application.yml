@@ -11,7 +11,5 @@ spring:
 tracemesh:
   kafka:
     topic: ${KAFKA_TOPIC:telemetry-spans}
-  hive:
-    jdbc-url: "${HIVE_JDBC_URL:jdbc:hive2://hive-server:10000/tracemesh_db}"
   producer:
     interval-ms: ${TRACE_INTERVAL_MS:10}
