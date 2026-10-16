@@ -33,6 +33,7 @@ public class SparkStreamingApp {
                 .option("kafka.bootstrap.servers", "kafka:9092")
                 .option("subscribe", "telemetry-spans")
                 .option("startingOffsets", "latest")
+                .option("failOnDataLoss", "false") // Prevents OffsetOutOfRangeException crashes
                 .load();
 
         Dataset<Row> parsedStream = kafkaStream
