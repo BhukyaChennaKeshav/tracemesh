@@ -36,7 +36,7 @@
           <div id="anomaly-status-text" class="mt-1 text-xs font-mono text-slate-300">Checking producer…</div>
           <div id="anomaly-message" class="mt-1 max-w-xs text-xs text-accentRed" aria-live="polite"></div>
         </div>
-        <button id="toggle-btn" type="button" class="rounded bg-accentRed px-4 py-2 text-xs font-bold uppercase tracking-wider text-white disabled:cursor-wait disabled:opacity-50">Loading…</button>
+        <button id="toggle-btn" type="button" disabled class="rounded bg-accentRed px-4 py-2 text-xs font-bold uppercase tracking-wider text-white disabled:cursor-wait disabled:opacity-50">Loading…</button>
       </section>
     </header>
 
@@ -147,6 +147,7 @@
 
     function updateAnomalyButton() {
       const button = document.getElementById('toggle-btn');
+      button.disabled = false;
       button.textContent = anomalyActive ? 'Disable anomaly' : 'Enable anomaly';
       button.className = 'rounded px-4 py-2 text-xs font-bold uppercase tracking-wider text-white disabled:cursor-wait disabled:opacity-50 ' +
         (anomalyActive ? 'bg-slate-700 hover:bg-slate-600' : 'bg-accentRed hover:bg-rose-600');
@@ -165,6 +166,7 @@
         document.getElementById('anomaly-message').textContent = '';
         updateAnomalyButton();
       } catch (error) {
+        document.getElementById('toggle-btn').disabled = true;
         document.getElementById('anomaly-message').textContent = 'Producer status unavailable; control not changed.';
         document.getElementById('anomaly-status-text').textContent = 'Producer status unknown';
         document.getElementById('anomaly-status-text').className = 'mt-1 text-xs font-mono text-accentRed';
