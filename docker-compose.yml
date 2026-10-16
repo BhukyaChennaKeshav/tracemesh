@@ -9,7 +9,6 @@ volumes:
   postgres_hive_data:
 
 services:
-  # 1. Message Broker (Confluent / Apache Kafka KRaft)
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
@@ -17,46 +16,52 @@ services:
       - "9092:9092"
     environment:
       KAFKA_NODE_ID: 1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
-      KAFKA_LISTENERS: 'PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     volumes:
       - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-  # 2. Apache Spark Master
   spark-master:
     image: apache/spark:3.5.0
     container_name: spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
     ports:
       - "8080:8080"
       - "7077:7077"
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-  # 3. Apache Spark Worker
   spark-worker:
     image: apache/spark:3.5.0
     container_name: spark-worker
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
     depends_on:
       - spark-master
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-# 4. Storage (Hadoop HDFS NameNode)
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
@@ -64,28 +69,35 @@ services:
       - "9870:9870"
       - "9000:9000"
     environment:
-      - CLUSTER_NAME=tracemesh
-      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      CLUSTER_NAME: tracemesh
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9870/ >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-  # 5. Storage (Hadoop HDFS DataNode)
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode
     environment:
-      - CLUSTER_NAME=tracemesh
-      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      CLUSTER_NAME: tracemesh
+      CORE_CONF_fs_defaultFS: hdfs://namenode:9000
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     depends_on:
-      - namenode
+      namenode:
+        condition: service_healthy
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-  # 6. Hive Metastore DB (PostgreSQL)
   hive-metastore-postgresql:
     image: postgres:13
     container_name: hive-metastore-db
@@ -95,54 +107,107 @@ services:
       POSTGRES_PASSWORD: hivepassword
     volumes:
       - postgres_hive_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-# 7. Apache Hive Server
   hive-server:
     image: bde2020/hive:2.3.2-postgresql-metastore
     container_name: hive-server
     depends_on:
-      - namenode
-      - datanode
-      - hive-metastore-postgresql
+      namenode:
+        condition: service_healthy
+      datanode:
+        condition: service_started
+      hive-metastore-postgresql:
+        condition: service_healthy
     environment:
       CORE_CONF_fs_defaultFS: "hdfs://namenode:9000"
       HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore-db:5432/metastore_db"
       HIVE_SITE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore-db:5432/metastore_db"
       HIVE_SITE_CONF_javax_jdo_option_ConnectionDriverName: "org.postgresql.Driver"
-      HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName: "hive"
-      HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword: "hivepassword"
+      HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName: hive
+      HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword: hivepassword
       HIVE_SITE_CONF_datanucleus_schema_autoCreateAll: "true"
     ports:
       - "10000:10000"
     volumes:
       - ./hive-warehouse:/workspace
+    healthcheck:
+      test: ["CMD-SHELL", "beeline -u jdbc:hive2://localhost:10000/default -n hive -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 45s
     networks:
       - tracemesh-net
+    restart: unless-stopped
 
-  # 8. Trace Producer App (Role 1)
+  # Initializes the external table after HiveServer2 is ready.
+  hive-init:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-init
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >-
+      until beeline -u jdbc:hive2://hive-server:10000/default -n hive -e 'SELECT 1' >/dev/null 2>&1; do
+        echo 'Waiting for HiveServer2...'; sleep 5;
+      done;
+      beeline -u jdbc:hive2://hive-server:10000/default -n hive -f /workspace/init-hive.sql
+    depends_on:
+      hive-server:
+        condition: service_healthy
+    volumes:
+      - ./hive-warehouse:/workspace:ro
+    networks:
+      - tracemesh-net
+    restart: "no"
+
   trace-producer:
     build:
       context: ./trace-producer
     container_name: trace-producer
     ports:
       - "8081:8081"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: telemetry-spans
+      HIVE_JDBC_URL: jdbc:hive2://hive-server:10000/tracemesh_db
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+      hive-init:
+        condition: service_completed_successfully
     restart: on-failure
     networks:
       - tracemesh-net
 
-  # 9. Spark Streaming Job (Role 2)
   spark-streaming-app:
     build:
       context: ./spark-streaming-job
     container_name: spark-streaming-app
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: telemetry-spans
+      KAFKA_STARTING_OFFSETS: latest
+      HDFS_OUTPUT_PATH: hdfs://namenode:9000/user/hive/warehouse/tracemesh_metrics
+      HDFS_CHECKPOINT_PATH: hdfs://namenode:9000/tmp/spark-checkpoints/tracemesh
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_DRIVER_HOST: spark-streaming-app
+      SPARK_SQL_SHUFFLE_PARTITIONS: 3
     depends_on:
-      - kafka
-      - namenode
-      - spark-master
+      kafka:
+        condition: service_healthy
+      namenode:
+        condition: service_healthy
+      spark-master:
+        condition: service_started
+      hive-init:
+        condition: service_completed_successfully
     restart: on-failure
     networks:
       - tracemesh-net
