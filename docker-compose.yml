@@ -210,8 +210,8 @@ services:
         condition: service_healthy
       spark-master:
         condition: service_started
-      hive-init:
-        condition: service_completed_successfully
+      trace-producer:
+        condition: service_started
     restart: on-failure
     networks:
       - tracemesh-net
