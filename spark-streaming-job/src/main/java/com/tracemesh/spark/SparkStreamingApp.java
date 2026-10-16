@@ -12,13 +12,28 @@ import static org.apache.spark.sql.functions.*;
 
 public class SparkStreamingApp {
 
+    private static String env(String name, String fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
     public static void main(String[] args) throws Exception {
+        // spark-submit supplies the master URL. Do not override it here, or the
+        // job silently runs locally instead of using the configured Spark cluster.
         SparkSession spark = SparkSession.builder()
                 .appName("TraceMesh-SparkStreaming")
-                .master("local[*]")
+                .config("spark.sql.shuffle.partitions",
+                        env("SPARK_SQL_SHUFFLE_PARTITIONS", "3"))
                 .getOrCreate();
 
         spark.sparkContext().setLogLevel("WARN");
+
+        String kafkaBootstrapServers = env("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092");
+        String kafkaTopic = env("KAFKA_TOPIC", "telemetry-spans");
+        String outputPath = env("HDFS_OUTPUT_PATH",
+                "hdfs://namenode:9000/user/hive/warehouse/tracemesh_metrics");
+        String checkpointPath = env("HDFS_CHECKPOINT_PATH",
+                "hdfs://namenode:9000/tmp/spark-checkpoints/tracemesh");
 
         StructType schema = new StructType()
                 .add("serviceName", DataTypes.StringType)
@@ -30,19 +45,23 @@ public class SparkStreamingApp {
 
         Dataset<Row> kafkaStream = spark.readStream()
                 .format("kafka")
-                .option("kafka.bootstrap.servers", "kafka:9092")
-                .option("subscribe", "telemetry-spans")
-                .option("startingOffsets", "latest")
-                .option("failOnDataLoss", "false") // Prevents OffsetOutOfRangeException crashes
+                .option("kafka.bootstrap.servers", kafkaBootstrapServers)
+                .option("subscribe", kafkaTopic)
+                .option("startingOffsets", env("KAFKA_STARTING_OFFSETS", "latest"))
+                .option("failOnDataLoss", "false")
                 .load();
 
         Dataset<Row> parsedStream = kafkaStream
-                .selectExpr("CAST(value AS STRING) as json_payload")
+                .selectExpr("CAST(value AS STRING) AS json_payload")
                 .select(from_json(col("json_payload"), schema).as("data"))
                 .select("data.*")
-                .withColumn("event_time", col("timestamp").cast(DataTypes.TimestampType));
+                // Ignore malformed JSON before it enters stateful aggregation.
+                .filter(col("serviceName").isNotNull()
+                        .and(col("timestamp").isNotNull())
+                        .and(col("executionDurationMs").isNotNull()))
+                .withColumn("event_time", to_timestamp(col("timestamp")))
+                .filter(col("event_time").isNotNull());
 
-        // Apply watermarking and sliding window aggregations
         Dataset<Row> windowedMetrics = parsedStream
                 .withWatermark("event_time", "1 minute")
                 .groupBy(
@@ -63,16 +82,15 @@ public class SparkStreamingApp {
                         col("avg_latency_ms"),
                         col("total_requests"),
                         col("error_count")
-                )
-                .withColumn("date_partition", to_date(col("window_start")));
+                );
 
-        // Write metrics stream directly to HDFS storage for Hive consumption
+        // Keep the Parquet layout flat so Hive's external table can read it
+        // without partition discovery or metastore repair commands.
         StreamingQuery query = windowedMetrics.writeStream()
                 .format("parquet")
                 .outputMode("append")
-                .partitionBy("date_partition")
-                .option("path", "hdfs://namenode:9000/user/hive/warehouse/tracemesh_metrics")
-                .option("checkpointLocation", "hdfs://namenode:9000/tmp/spark-checkpoints/tracemesh")
+                .option("path", outputPath)
+                .option("checkpointLocation", checkpointPath)
                 .trigger(Trigger.ProcessingTime("10 seconds"))
                 .start();
 
