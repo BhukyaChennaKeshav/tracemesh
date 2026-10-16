@@ -1,71 +1,81 @@
-# TraceMesh 🕸️
-**Real-Time Microservice Observability & Anomaly Detection Pipeline**
+# TraceMesh
 
-Modern microservice architectures fail in complex ways. A single user click can trigger a chain reaction across dozens of backend services, making root-cause analysis difficult during an incident. 
+TraceMesh is a local proof-of-concept telemetry pipeline for microservice latency monitoring and SLA anomaly detection.
 
-**TraceMesh** is a real-time data engineering pipeline built to ingest continuous telemetry logs, calculate streaming latency metrics (like P99), and automatically identify backend services breaching their Service Level Agreements (SLAs) before they cause total system outages.
+## Data flow
 
-## 🎯 The SRE Problem It Solves
-Instead of waiting for customer complaints, TraceMesh uses **sliding window aggregations** over high-throughput event streams to detect temporary micro-spikes in latency. It isolates the exact degrading service and stores the historical context for post-incident reviews (PIRs).
+1. The Spring Boot producer publishes JSON trace spans to Kafka.
+2. Spark Structured Streaming consumes the topic, calculates 10-second event-time windows sliding every 5 seconds, and writes Parquet metrics to HDFS.
+3. Hive exposes the Parquet directory through the `tracemesh_db.service_latency_metrics` external table.
+4. The dashboard reads the latest stored windows from the producer's `/api/metrics` endpoint. If Hive is unavailable, the dashboard reports that state instead of inventing sample data.
 
-## 🏗️ Architecture & Data Flow
+## Stack
 
-TraceMesh is orchestrated via Docker Compose, running a distributed 9-node local cluster.
+- Java 17 and Spring Boot for the synthetic trace producer and REST API
+- Kafka in KRaft mode for ingestion
+- Apache Spark 3.5 Structured Streaming for aggregation
+- HDFS and Hive 2.3 for Parquet storage and SQL queries
+- Docker Compose for local orchestration
 
-```text
-[Synthetic Microservices] (Spring Boot) 
-       │ (JSON Trace Logs @ 1k+ events/sec)
-       ▼
-[Message Broker]          (Apache Kafka - KRaft Mode)
-       │ (Buffered high-throughput stream)
-       ▼
-[Stream Processor]        (Apache Spark Structured Streaming)
-       │ (10s sliding windows, P99 calculation, Event-time watermarking)
-       ▼
-[Data Warehouse]          (Hadoop HDFS / Apache Hive)
-       │ (Partitioned Parquet storage)
-       ▼
-[Analytics Engine]        (HiveServer2 SQL Queries)
-```
+This is a single-broker local PoC, not a production high-availability deployment. Kafka has one replica, and the sample data generator is synthetic.
 
-### Core Tech Stack
-* **Ingestion:** Java, Spring Boot, Apache Kafka
-* **Stream Processing:** Apache Spark (Java API)
-* **Storage & Analytics:** HDFS, Apache Hive, PostgreSQL (Metastore)
-* **Infrastructure:** Docker, Docker Compose
+## Run locally
 
-## ⚡ Key Features (Phase 1 - Complete)
-* **Fault-Tolerant Streaming:** Utilizes Spark Checkpointing to HDFS, ensuring exactly-once processing semantics even if the worker nodes crash.
-* **Parallel Processing:** Kafka topics are explicitly partitioned to allow Spark to read and process the telemetry stream across multiple concurrent tasks.
-* **Late Data Handling:** Implements event-time watermarking to accommodate network jitter and out-of-order logs without leaking memory.
-* **Simulated Degradation:** Includes a REST endpoint to artificially inject network latency into specific microservices to test the pipeline's anomaly detection capabilities.
+Prerequisites: Docker Desktop / Docker Engine with the Compose plugin, and enough memory for Kafka, Spark, HDFS, and Hive (at least 8 GB allocated is a reasonable starting point).
 
-## 🚀 Roadmap & Future Work
-TraceMesh is currently a local PoC. The next phase of development focuses on productionizing the deployment and integrating standard SRE tooling:
+Build and start the stack:
 
-- [ ] **OpenTelemetry Integration:** Replace the synthetic log generator with a real OpenTelemetry collector ingesting distributed traces from actual containerized apps.
-- [ ] **Infrastructure as Code (IaC):** Migrate from Docker Compose to **Kubernetes (Helm)** for container orchestration, and use **Terraform** to provision the cloud infrastructure.
-- [ ] **Visualization & Alerting:** Mount **Grafana** on top of the analytical datastore to visualize the P99 latency graphs in real-time, integrating Webhook alerts to Slack/PagerDuty when SLA thresholds are breached.
-- [ ] **Dead Letter Queues (DLQ):** Implement robust error handling in Spark to route malformed JSON logs to a DLQ topic rather than dropping them.
-
-## 🛠️ Quick Start (Local Development)
-
-Ensure Docker Desktop is running with at least 8GB of RAM allocated.
-
-**1. Spin up the cluster:**
 ```bash
-docker-compose up -d
-```
-*(Wait ~30 seconds for Kafka and HDFS to achieve quorum).*
-
-**2. Trigger a simulated incident:**
-Force the `payment-service` to breach its SLA (spiking latency from ~50ms to >2000ms).
-```bash
-curl -X POST "http://localhost:8081/api/anomaly/toggle?enable=true"
+docker compose up --build -d
+docker compose ps
 ```
 
-**3. Identify the bottleneck via Hive:**
+Compose waits for Kafka, HDFS, PostgreSQL, and Hive readiness where supported. The one-shot `hive-init` service creates the database and external table before the producer and streaming job start.
+
+Open the dashboard at [http://localhost:8081](http://localhost:8081). Enable or disable the synthetic payment-service anomaly with the dashboard button. The toggle controls the producer; the dashboard only displays metrics actually returned by the pipeline and does not simulate values when the metrics API fails.
+
+Check logs if the pipeline is still warming up:
+
 ```bash
-# Execute the SLA violation query against the data warehouse
-docker exec -it hive-server hive -f /workspace/queries/01_detect_sla_violations.sql
+docker compose logs -f kafka trace-producer spark-master spark-worker spark-streaming-app namenode datanode hive-server hive-init
 ```
+
+The first streaming windows may take a little time to appear because Spark uses a 10-second processing trigger and event-time windows.
+
+## Query the warehouse
+
+Run the SLA query through HiveServer2:
+
+```bash
+docker compose exec hive-server beeline -u jdbc:hive2://localhost:10000/tracemesh_db -n hive -f /workspace/queries/01_detect_sla_violations.sql
+```
+
+Other example queries are in `hive-warehouse/queries`.
+
+The sample SLA query flags windows where P99 latency exceeds 1000 ms. The anomaly mode injects 1500–3499 ms latency for payment-service spans; because the generator selects services randomly, only some spans are affected.
+
+## Useful endpoints
+
+- `GET /api/anomaly/status` — returns the current anomaly toggle state.
+- `POST /api/anomaly/toggle?enable=true` — enables the synthetic payment-service degradation.
+- `GET /api/metrics` — returns up to 50 latest metric windows, or HTTP 503 when Hive cannot be queried.
+
+## Configuration
+
+The defaults are set for Docker Compose. Override them through the environment when needed:
+
+- `KAFKA_BOOTSTRAP_SERVERS` (default `kafka:9092`)
+- `KAFKA_TOPIC` (default `telemetry-spans`)
+- `TRACE_INTERVAL_MS` (default `10`)
+- `HIVE_JDBC_URL` (default `jdbc:hive2://hive-server:10000/tracemesh_db`)
+- `HDFS_OUTPUT_PATH` (default `hdfs://namenode:9000/user/hive/warehouse/tracemesh_metrics`)
+- `HDFS_CHECKPOINT_PATH` (default `hdfs://namenode:9000/tmp/spark-checkpoints/tracemesh`)
+- `SPARK_MASTER_URL` (default `spark://spark-master:7077`)
+- `SPARK_DRIVER_HOST` (default `spark-streaming-app`)
+- `SPARK_SQL_SHUFFLE_PARTITIONS` (default `3`)
+
+## Troubleshooting
+
+- If the dashboard reports metrics unavailable, inspect `spark-streaming-app`, HDFS, and Hive logs. An empty response is not used to hide Hive errors.
+- If you changed the external table schema or the Hive init SQL after an earlier run, recreate the local stack to re-run the one-shot initialization: `docker compose down -v` followed by `docker compose up --build -d`. **This removes local Kafka, HDFS, and Hive volume data.**
+- The producer and Spark consumer use the internal Compose DNS name `kafka:9092`. The advertised listener is designed for containers on the Compose network.
