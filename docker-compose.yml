@@ -182,12 +182,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: telemetry-spans
-      HIVE_JDBC_URL: jdbc:hive2://hive-server:10000/tracemesh_db
     depends_on:
       kafka:
         condition: service_healthy
-      hive-init:
-        condition: service_completed_successfully
     restart: on-failure
     networks:
       - tracemesh-net
@@ -205,6 +202,7 @@ services:
       SPARK_MASTER_URL: spark://spark-master:7077
       SPARK_DRIVER_HOST: spark-streaming-app
       SPARK_SQL_SHUFFLE_PARTITIONS: 3
+      METRICS_API_URL: http://trace-producer:8081/api/metrics/ingest
     depends_on:
       kafka:
         condition: service_healthy
