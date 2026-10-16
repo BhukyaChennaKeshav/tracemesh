@@ -1,303 +1,313 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TraceMesh | SRE Observability & SLA Dashboard</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        darkBg: '#0F172A',
-                        cardBg: '#1E293B',
-                        cardBorder: '#334155',
-                        accentBlue: '#38BDF8',
-                        accentRed: '#F43F5E',
-                        accentGreen: '#10B981',
-                        accentYellow: '#FBBF24'
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body { background-color: #0F172A; color: #E2E8F0; font-family: system-ui, -apple-system, sans-serif; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #1E293B; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TraceMesh | SRE Observability</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = { theme: { extend: { colors: {
+      darkBg: '#0F172A', cardBg: '#1E293B', cardBorder: '#334155',
+      accentBlue: '#38BDF8', accentRed: '#F43F5E', accentGreen: '#10B981',
+      accentYellow: '#FBBF24'
+    } } } };
+  </script>
+  <style>
+    body { background: #0F172A; color: #E2E8F0; font-family: system-ui, sans-serif; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+  </style>
 </head>
-<body class="p-6">
-
-    <!-- Top Navigation / Header -->
-    <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-6 mb-6 border-b border-cardBorder gap-4">
+<body class="min-h-screen p-4 md:p-6">
+  <main class="mx-auto max-w-7xl">
+    <header class="mb-6 flex flex-col gap-4 border-b border-cardBorder pb-5 md:flex-row md:items-center md:justify-between">
+      <div>
+        <div class="flex items-center gap-3">
+          <span id="status-indicator" class="h-3 w-3 rounded-full bg-slate-500"></span>
+          <h1 class="text-2xl font-bold tracking-tight text-white">TraceMesh <span class="font-mono text-lg text-accentBlue">SRE Pipeline</span></h1>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">Kafka → Spark Structured Streaming → HDFS Parquet → Hive</p>
+        <p id="pipeline-status" role="status" class="mt-1 text-xs text-slate-400">Connecting to telemetry pipeline…</p>
+      </div>
+      <section class="flex items-center gap-4 rounded-lg border border-cardBorder bg-cardBg p-3">
         <div>
-            <div class="flex items-center gap-3">
-                <div class="h-4 w-4 rounded-full bg-accentGreen animate-pulse" id="status-indicator"></div>
-                <h1 class="text-2xl font-bold tracking-tight text-white">TraceMesh <span class="text-accentBlue font-mono text-lg">SRE Pipeline</span></h1>
-            </div>
-            <p class="text-xs text-slate-400 mt-1 font-mono">Kafka ➔ Spark Structured Streaming ➔ HDFS Parquet ➔ Hive Metastore</p>
+          <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Synthetic anomaly</div>
+          <div id="anomaly-status-text" class="mt-1 text-xs font-mono text-slate-300">Checking producer…</div>
+          <div id="anomaly-message" class="mt-1 max-w-xs text-xs text-accentRed" aria-live="polite"></div>
         </div>
-
-        <!-- Anomaly Control Widget -->
-        <div class="bg-cardBg p-3 rounded-lg border border-cardBorder flex items-center gap-4">
-            <div>
-                <div class="text-xs text-slate-400 uppercase font-bold tracking-wider">Synthetic Anomaly Mode</div>
-                <div class="text-xs font-mono text-slate-300" id="anomaly-status-text">Target: payment-service (OFF)</div>
-            </div>
-            <button id="toggle-btn" onclick="toggleAnomaly()" class="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded bg-accentRed hover:bg-rose-600 text-white transition-all shadow-md">
-                Enable Anomaly
-            </button>
-        </div>
+        <button id="toggle-btn" type="button" disabled class="rounded bg-accentRed px-4 py-2 text-xs font-bold uppercase tracking-wider text-white disabled:cursor-wait disabled:opacity-50">Loading…</button>
+      </section>
     </header>
 
-    <!-- Global Telemetry Metrics Overview -->
-    <section class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-cardBg p-4 rounded-lg border border-cardBorder">
-            <div class="text-xs font-semibold text-slate-400 uppercase">Max P99 Latency</div>
-            <div class="text-3xl font-extrabold text-white mt-1 font-mono" id="kpi-p99">168 <span class="text-sm font-normal text-slate-400">ms</span></div>
-            <div class="text-xs text-accentGreen mt-2 flex items-center gap-1" id="kpi-p99-status">
-                <span>✓</span> SLA Threshold: 1000 ms
-            </div>
-        </div>
-
-        <div class="bg-cardBg p-4 rounded-lg border border-cardBorder">
-            <div class="text-xs font-semibold text-slate-400 uppercase">Avg Cluster Latency</div>
-            <div class="text-3xl font-extrabold text-white mt-1 font-mono" id="kpi-avg">142 <span class="text-sm font-normal text-slate-400">ms</span></div>
-            <div class="text-xs text-slate-400 mt-2">Across 5 active microservices</div>
-        </div>
-
-        <div class="bg-cardBg p-4 rounded-lg border border-cardBorder">
-            <div class="text-xs font-semibold text-slate-400 uppercase">Total Sampled Spans</div>
-            <div class="text-3xl font-extrabold text-white mt-1 font-mono" id="kpi-requests">2,410</div>
-            <div class="text-xs text-accentBlue mt-2 font-mono">10s Streaming Sliding Windows</div>
-        </div>
-
-        <div class="bg-cardBg p-4 rounded-lg border border-cardBorder">
-            <div class="text-xs font-semibold text-slate-400 uppercase">Active SLA Breaches</div>
-            <div class="text-3xl font-extrabold text-accentGreen mt-1 font-mono" id="kpi-breaches">0</div>
-            <div class="text-xs text-slate-400 mt-2 font-mono">P99 > 1000ms Filter</div>
-        </div>
+    <section class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <article class="rounded-lg border border-cardBorder bg-cardBg p-4">
+        <div class="text-xs font-semibold uppercase text-slate-400">Max latest P99</div>
+        <div id="kpi-p99" class="mt-1 font-mono text-3xl font-extrabold text-white">—</div>
+        <div id="kpi-p99-status" class="mt-2 text-xs text-slate-400">SLA threshold: 1000 ms</div>
+      </article>
+      <article class="rounded-lg border border-cardBorder bg-cardBg p-4">
+        <div class="text-xs font-semibold uppercase text-slate-400">Average service latency</div>
+        <div id="kpi-avg" class="mt-1 font-mono text-3xl font-extrabold text-white">—</div>
+        <div class="mt-2 text-xs text-slate-400">Mean of latest available service windows</div>
+      </article>
+      <article class="rounded-lg border border-cardBorder bg-cardBg p-4">
+        <div class="text-xs font-semibold uppercase text-slate-400">Requests in latest windows</div>
+        <div id="kpi-requests" class="mt-1 font-mono text-3xl font-extrabold text-white">—</div>
+        <div class="mt-2 text-xs text-slate-400">Sum across services with metrics</div>
+      </article>
+      <article class="rounded-lg border border-cardBorder bg-cardBg p-4">
+        <div class="text-xs font-semibold uppercase text-slate-400">Services breaching SLA</div>
+        <div id="kpi-breaches" class="mt-1 font-mono text-3xl font-extrabold text-white">—</div>
+        <div class="mt-2 text-xs text-slate-400">Latest P99 above 1000 ms</div>
+      </article>
     </section>
 
-    <!-- Main Analytics Section -->
-    <section class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        
-        <!-- Latency Chart (2 Cols) -->
-        <div class="lg:col-span-2 bg-cardBg p-5 rounded-lg border border-cardBorder flex flex-col justify-between">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-sm font-bold uppercase text-slate-300 tracking-wider">Real-Time Service P99 Latency (ms)</h2>
-                <span class="text-xs font-mono bg-slate-800 text-slate-400 px-2 py-1 rounded">Live Updates (3s)</span>
-            </div>
-            <div class="relative h-72 w-full">
-                <canvas id="latencyChart"></canvas>
-            </div>
+    <section class="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <article class="rounded-lg border border-cardBorder bg-cardBg p-5 lg:col-span-2">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-sm font-bold uppercase tracking-wider text-slate-300">P99 latency by service</h2>
+          <span class="rounded bg-slate-800 px-2 py-1 font-mono text-xs text-slate-400">Refresh every 3 seconds</span>
         </div>
-
-        <!-- SLA Incident Feed (1 Col) -->
-        <div class="bg-cardBg p-5 rounded-lg border border-cardBorder flex flex-col">
-            <h2 class="text-sm font-bold uppercase text-slate-300 tracking-wider mb-4">SLA Breach Audit Log</h2>
-            <div class="flex-1 overflow-y-auto max-h-72 custom-scrollbar space-y-3" id="incident-log">
-                <div class="text-xs text-slate-500 italic text-center py-8">No active SLA breaches recorded. All microservices operating within baseline parameter (&lt; 1000ms).</div>
-            </div>
+        <div class="relative h-72"><canvas id="latencyChart" aria-label="P99 latency over time by service"></canvas></div>
+        <p id="chart-empty" class="mt-3 text-center text-sm text-slate-500">Waiting for the first persisted streaming windows…</p>
+      </article>
+      <article class="rounded-lg border border-cardBorder bg-cardBg p-5">
+        <h2 class="mb-4 text-sm font-bold uppercase tracking-wider text-slate-300">SLA incident feed</h2>
+        <div id="incident-log" class="custom-scrollbar max-h-72 space-y-3 overflow-y-auto">
+          <p data-empty="true" class="py-8 text-center text-xs italic text-slate-500">No SLA incidents observed in the latest windows.</p>
         </div>
+      </article>
     </section>
 
-    <!-- Microservices Telemetry Matrix -->
-    <section class="bg-cardBg rounded-lg border border-cardBorder p-5">
-        <h2 class="text-sm font-bold uppercase text-slate-300 tracking-wider mb-4">Microservice Telemetry Status Matrix</h2>
-        <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs font-mono">
-                <thead class="bg-slate-800 text-slate-400 uppercase text-[10px]">
-                    <tr>
-                        <th class="p-3">Service Name</th>
-                        <th class="p-3">Current P99 (ms)</th>
-                        <th class="p-3">Avg Latency (ms)</th>
-                        <th class="p-3">Window Spans</th>
-                        <th class="p-3">Health Status</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-cardBorder" id="service-matrix">
-                    <!-- Dynamic Rows -->
-                </tbody>
-            </table>
-        </div>
+    <section class="rounded-lg border border-cardBorder bg-cardBg p-5">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-300">Service telemetry matrix</h2>
+        <span id="last-updated" class="text-xs text-slate-500">No data yet</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left font-mono text-xs">
+          <thead class="bg-slate-800 text-[10px] uppercase text-slate-400">
+            <tr><th class="p-3">Service</th><th class="p-3">Latest P99</th><th class="p-3">Average</th><th class="p-3">Requests</th><th class="p-3">Server errors</th><th class="p-3">Status</th></tr>
+          </thead>
+          <tbody id="service-matrix" class="divide-y divide-cardBorder">
+            <tr><td class="p-4 text-center text-slate-500" colspan="6">Waiting for live metrics from Hive…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
+  </main>
 
-    <!-- Dashboard Logic & Simulation Engine -->
-    <script>
-        let isAnomalyActive = false;
-        const producerApiUrl = 'http://localhost:8081/api/anomaly/toggle';
+  <script>
+    const services = ['payment-service', 'order-service', 'inventory-service', 'auth-service', 'notification-service'];
+    const colors = ['#38BDF8', '#10B981', '#FBBF24', '#A855F7', '#EC4899'];
+    const SLA_MS = 1000;
+    let anomalyActive = false;
+    let metricsInFlight = false;
+    let latestMetrics = [];
+    const seenIncidents = new Set();
 
-        const services = [
-            { name: 'payment-service', baseP99: 168, baseAvg: 140 },
-            { name: 'order-service', baseP99: 165, baseAvg: 138 },
-            { name: 'inventory-service', baseP99: 167, baseAvg: 141 },
-            { name: 'auth-service', baseP99: 166, baseAvg: 139 },
-            { name: 'notification-service', baseP99: 169, baseAvg: 142 }
-        ];
+    const chart = new Chart(document.getElementById('latencyChart').getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: services.map(function (service, index) {
+          return { label: service, data: [], borderColor: colors[index], borderWidth: 2,
+            tension: 0.25, pointRadius: 2, spanGaps: false };
+        })
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        scales: {
+          x: { grid: { color: '#334155' }, ticks: { color: '#94A3B8', maxRotation: 0 } },
+          y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94A3B8' },
+            title: { display: true, text: 'Milliseconds', color: '#94A3B8' } }
+        },
+        plugins: { legend: { labels: { color: '#CBD5E1' } } }
+      }
+    });
 
-        // Chart Setup
-        const ctx = document.getElementById('latencyChart').getContext('2d');
-        const latencyChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: services.map((s, idx) => ({
-                    label: s.name,
-                    data: [],
-                    borderColor: ['#38BDF8', '#10B981', '#FBBF24', '#A855F7', '#EC4899'][idx],
-                    borderWidth: 2,
-                    tension: 0.3,
-                    pointRadius: 2
-                }))
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: { grid: { color: '#334155' }, ticks: { color: '#94A3B8', font: { family: 'monospace', size: 10 } } },
-                    y: { grid: { color: '#334155' }, ticks: { color: '#94A3B8', font: { family: 'monospace', size: 10 } }, min: 0 }
-                },
-                plugins: {
-                    legend: { labels: { color: '#CBD5E1', font: { size: 11 } } }
-                }
-            }
-        });
+    function escapeHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char];
+      });
+    }
 
-        // Toggle Anomaly API Call
-        async function toggleAnomaly() {
-            const nextState = !isAnomalyActive;
-            try {
-                const res = await fetch(`${producerApiUrl}?enable=${nextState}`, { method: 'POST' });
-                if (res.ok) {
-                    isAnomalyActive = nextState;
-                    updateBtnUI();
-                } else {
-                    alert('Failed to connect to trace-producer REST endpoint.');
-                }
-            } catch (err) {
-                console.warn('Backend API unreachable. Toggling UI simulation mode.', err);
-                isAnomalyActive = nextState;
-                updateBtnUI();
-            }
+    function formatNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number.toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—';
+    }
+
+    function setPipelineStatus(available, detail) {
+      const indicator = document.getElementById('status-indicator');
+      indicator.className = 'h-3 w-3 rounded-full ' + (available ? 'bg-accentGreen' : 'bg-accentRed');
+      document.getElementById('pipeline-status').textContent = detail;
+      document.getElementById('pipeline-status').className = 'mt-1 text-xs ' + (available ? 'text-accentGreen' : 'text-accentRed');
+    }
+
+    function updateAnomalyButton() {
+      const button = document.getElementById('toggle-btn');
+      button.disabled = false;
+      button.textContent = anomalyActive ? 'Disable anomaly' : 'Enable anomaly';
+      button.className = 'rounded px-4 py-2 text-xs font-bold uppercase tracking-wider text-white disabled:cursor-wait disabled:opacity-50 ' +
+        (anomalyActive ? 'bg-slate-700 hover:bg-slate-600' : 'bg-accentRed hover:bg-rose-600');
+      document.getElementById('anomaly-status-text').textContent =
+        'Target: payment-service (' + (anomalyActive ? 'ACTIVE' : 'OFF') + ')';
+      document.getElementById('anomaly-status-text').className =
+        'mt-1 text-xs font-mono ' + (anomalyActive ? 'text-accentRed font-bold' : 'text-slate-300');
+    }
+
+    async function refreshAnomalyStatus() {
+      try {
+        const response = await fetch('/api/anomaly/status', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        anomalyActive = data.anomalyActive === true;
+        document.getElementById('anomaly-message').textContent = '';
+        updateAnomalyButton();
+      } catch (error) {
+        document.getElementById('toggle-btn').disabled = true;
+        document.getElementById('anomaly-message').textContent = 'Producer status unavailable; control not changed.';
+        document.getElementById('anomaly-status-text').textContent = 'Producer status unknown';
+        document.getElementById('anomaly-status-text').className = 'mt-1 text-xs font-mono text-accentRed';
+      }
+    }
+
+    async function toggleAnomaly() {
+      const button = document.getElementById('toggle-btn');
+      const nextState = !anomalyActive;
+      button.disabled = true;
+      document.getElementById('anomaly-message').textContent = '';
+      try {
+        const response = await fetch('/api/anomaly/toggle?enable=' + nextState, { method: 'POST' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        anomalyActive = data.anomalyActive === true;
+        updateAnomalyButton();
+      } catch (error) {
+        document.getElementById('anomaly-message').textContent = 'Could not update producer. Check backend availability and try again.';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function addIncident(service, latency, windowStart) {
+      const key = service + ':' + windowStart;
+      if (seenIncidents.has(key)) return;
+      seenIncidents.add(key);
+      if (seenIncidents.size > 250) seenIncidents.delete(seenIncidents.values().next().value);
+
+      const container = document.getElementById('incident-log');
+      const empty = container.querySelector('[data-empty="true"]');
+      if (empty) empty.remove();
+      const item = document.createElement('div');
+      item.className = 'rounded border border-rose-800 bg-rose-950/60 p-3 text-xs';
+      item.innerHTML = '<div class="font-bold text-accentRed">' + escapeHtml(service) + '</div>' +
+        '<div class="mt-1 text-slate-300">P99 latency: <strong class="text-white">' + escapeHtml(formatNumber(latency)) +
+        ' ms</strong></div><div class="mt-1 text-[10px] text-slate-500">Window: ' + escapeHtml(windowStart || 'unknown') + '</div>';
+      container.prepend(item);
+      while (container.children.length > 5) container.removeChild(container.lastElementChild);
+    }
+
+    function renderEmptyState(message) {
+      document.getElementById('service-matrix').innerHTML =
+        '<tr><td class="p-4 text-center text-slate-500" colspan="6">' + escapeHtml(message) + '</td></tr>';
+      document.getElementById('chart-empty').textContent = message;
+      document.getElementById('chart-empty').classList.remove('hidden');
+      ['kpi-p99', 'kpi-avg', 'kpi-requests', 'kpi-breaches'].forEach(function (id) {
+        document.getElementById(id).textContent = '—';
+      });
+      document.getElementById('last-updated').textContent = 'No data yet';
+    }
+
+    function renderMetrics(rows) {
+      latestMetrics = rows;
+      const newestByService = new Map();
+      rows.forEach(function (row) {
+        if (row && row.serviceName && !newestByService.has(row.serviceName)) {
+          newestByService.set(row.serviceName, row);
         }
+      });
 
-        function updateBtnUI() {
-            const btn = document.getElementById('toggle-btn');
-            const txt = document.getElementById('anomaly-status-text');
-            if (isAnomalyActive) {
-                btn.innerText = 'Disable Anomaly';
-                btn.className = 'px-4 py-2 text-xs font-bold uppercase tracking-wider rounded bg-slate-700 hover:bg-slate-600 text-white transition-all shadow-md';
-                txt.innerText = 'Target: payment-service (ACTIVE SPIKE)';
-                txt.className = 'text-xs font-mono text-accentRed font-bold';
-            } else {
-                btn.innerText = 'Enable Anomaly';
-                btn.className = 'px-4 py-2 text-xs font-bold uppercase tracking-wider rounded bg-accentRed hover:bg-rose-600 text-white transition-all shadow-md';
-                txt.innerText = 'Target: payment-service (OFF)';
-                txt.className = 'text-xs font-mono text-slate-300';
-            }
-        }
+      if (newestByService.size === 0) {
+        renderEmptyState('No persisted windows yet. Check that Spark is consuming Kafka and writing Parquet to HDFS.');
+        document.getElementById('incident-log').innerHTML =
+          '<p data-empty="true" class="py-8 text-center text-xs italic text-slate-500">No SLA incidents observed.</p>';
+        return;
+      }
 
-        // Live Data Refresh Cycle
-        function refreshTelemetry() {
-            const now = new Date().toLocaleTimeString();
-            let maxClusterP99 = 0;
-            let activeBreaches = 0;
-            let matrixHtml = '';
+      const current = services.map(function (service) { return newestByService.get(service); }).filter(Boolean);
+      const p99Values = current.map(function (row) { return Number(row.p99LatencyMs); }).filter(Number.isFinite);
+      const avgValues = current.map(function (row) { return Number(row.avgLatencyMs); }).filter(Number.isFinite);
+      const requestTotal = current.reduce(function (sum, row) { return sum + Number(row.totalRequests || 0); }, 0);
+      const maxP99 = p99Values.length ? Math.max.apply(null, p99Values) : null;
+      const average = avgValues.length ? avgValues.reduce(function (sum, value) { return sum + value; }, 0) / avgValues.length : null;
+      const breaches = current.filter(function (row) { return Number(row.p99LatencyMs) > SLA_MS; }).length;
 
-            // Update Chart Time Axis
-            if (latencyChart.data.labels.length > 12) {
-                latencyChart.data.labels.shift();
-                latencyChart.data.datasets.forEach(ds => ds.data.shift());
-            }
-            latencyChart.data.labels.push(now);
+      document.getElementById('kpi-p99').textContent = maxP99 == null ? '—' : formatNumber(maxP99) + ' ms';
+      document.getElementById('kpi-avg').textContent = average == null ? '—' : formatNumber(average) + ' ms';
+      document.getElementById('kpi-requests').textContent = formatNumber(requestTotal);
+      document.getElementById('kpi-breaches').textContent = String(breaches);
+      document.getElementById('kpi-breaches').className =
+        'mt-1 font-mono text-3xl font-extrabold ' + (breaches ? 'text-accentRed' : 'text-white');
+      document.getElementById('kpi-p99-status').textContent =
+        breaches ? breaches + ' service(s) over SLA threshold' : 'SLA threshold: ' + SLA_MS + ' ms';
 
-            services.forEach((s, idx) => {
-                let p99 = s.baseP99 + Math.floor(Math.random() * 10 - 5);
-                let avg = s.baseAvg + Math.floor(Math.random() * 6 - 3);
+      const label = new Date().toLocaleTimeString();
+      chart.data.labels.push(label);
+      services.forEach(function (service, index) {
+        const row = newestByService.get(service);
+        chart.data.datasets[index].data.push(row ? Number(row.p99LatencyMs) : null);
+      });
+      if (chart.data.labels.length > 20) {
+        chart.data.labels.shift();
+        chart.data.datasets.forEach(function (dataset) { dataset.data.shift(); });
+      }
+      chart.update();
+      document.getElementById('chart-empty').classList.add('hidden');
 
-                // Inject Synthetic Spike into payment-service if active
-                if (s.name === 'payment-service' && isAnomalyActive) {
-                    p99 = 1850 + Math.floor(Math.random() * 400);
-                    avg = 1200 + Math.floor(Math.random() * 200);
-                }
+      const tableRows = current.map(function (row) {
+        const p99 = Number(row.p99LatencyMs);
+        const breached = p99 > SLA_MS;
+        if (breached) addIncident(row.serviceName, p99, row.windowStart);
+        const status = breached
+          ? '<span class="rounded border border-rose-800 bg-rose-950 px-2 py-1 font-bold text-accentRed">SLA BREACH</span>'
+          : '<span class="rounded border border-emerald-800 bg-emerald-950 px-2 py-1 text-accentGreen">HEALTHY</span>';
+        return '<tr class="hover:bg-slate-800/50">' +
+          '<td class="p-3 font-bold text-white">' + escapeHtml(row.serviceName) + '</td>' +
+          '<td class="p-3 ' + (breached ? 'font-bold text-accentRed' : 'text-slate-300') + '">' + escapeHtml(formatNumber(row.p99LatencyMs)) + ' ms</td>' +
+          '<td class="p-3 text-slate-300">' + escapeHtml(formatNumber(row.avgLatencyMs)) + ' ms</td>' +
+          '<td class="p-3 text-slate-300">' + escapeHtml(formatNumber(row.totalRequests)) + '</td>' +
+          '<td class="p-3 text-slate-300">' + escapeHtml(formatNumber(row.errorCount)) + '</td>' +
+          '<td class="p-3">' + status + '</td></tr>';
+      });
+      document.getElementById('service-matrix').innerHTML = tableRows.join('');
+      document.getElementById('last-updated').textContent = 'Latest API response: ' + new Date().toLocaleTimeString();
+    }
 
-                if (p99 > maxClusterP99) maxClusterP99 = p99;
+    async function refreshTelemetry() {
+      if (metricsInFlight) return;
+      metricsInFlight = true;
+      try {
+        const response = await fetch('/api/metrics', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const data = await response.json();
+        if (!Array.isArray(data)) throw new Error('Unexpected metrics response');
+        renderMetrics(data);
+        setPipelineStatus(true, 'Metrics API reachable · checked ' + new Date().toLocaleTimeString());
+      } catch (error) {
+        setPipelineStatus(false, 'Telemetry unavailable · check producer, Hive, and Spark logs');
+        if (latestMetrics.length === 0) renderEmptyState('Metrics API unavailable. No synthetic fallback data is shown.');
+      } finally {
+        metricsInFlight = false;
+      }
+    }
 
-                latencyChart.data.datasets[idx].data.push(p99);
-
-                // Health Status Calculation
-                const isBreached = p99 > 1000;
-                if (isBreached) activeBreaches++;
-
-                const statusBadge = isBreached 
-                    ? `<span class="bg-rose-950 text-accentRed px-2 py-1 rounded border border-rose-800 font-bold animate-pulse">SLA BREACH (>1000ms)</span>`
-                    : `<span class="bg-emerald-950 text-accentGreen px-2 py-1 rounded border border-emerald-800">HEALTHY</span>`;
-
-                matrixHtml += `
-                    <tr class="hover:bg-slate-800/50">
-                        <td class="p-3 font-bold text-white">${s.name}</td>
-                        <td class="p-3 font-mono ${isBreached ? 'text-accentRed font-bold' : 'text-slate-300'}">${p99}.0 ms</td>
-                        <td class="p-3 font-mono text-slate-400">${avg}.0 ms</td>
-                        <td class="p-3 font-mono text-slate-400">${Math.floor(Math.random() * 50 + 180)}</td>
-                        <td class="p-3">${statusBadge}</td>
-                    </tr>
-                `;
-
-                // Log Incident if breached
-                if (isBreached) {
-                    logIncident(s.name, p99, now);
-                }
-            });
-
-            latencyChart.update();
-
-            // Update KPI Cards
-            document.getElementById('kpi-p99').innerHTML = `${maxClusterP99} <span class="text-sm font-normal text-slate-400">ms</span>`;
-            document.getElementById('kpi-breaches').innerText = activeBreaches;
-            document.getElementById('service-matrix').innerHTML = matrixHtml;
-
-            const breachCard = document.getElementById('kpi-breaches');
-            const p99Status = document.getElementById('kpi-p99-status');
-            
-            if (activeBreaches > 0) {
-                breachCard.className = 'text-3xl font-extrabold text-accentRed mt-1 font-mono animate-bounce';
-                p99Status.className = 'text-xs text-accentRed mt-2 flex items-center gap-1 font-bold';
-                p99Status.innerHTML = '<span>⚠️</span> SLA VIOLATION IN PROGRESS';
-            } else {
-                breachCard.className = 'text-3xl font-extrabold text-accentGreen mt-1 font-mono';
-                p99Status.className = 'text-xs text-accentGreen mt-2 flex items-center gap-1';
-                p99Status.innerHTML = '<span>✓</span> SLA Threshold: 1000 ms';
-            }
-        }
-
-        function logIncident(service, latency, time) {
-            const container = document.getElementById('incident-log');
-            if (container.querySelector('.italic')) container.innerHTML = '';
-
-            const incident = document.createElement('div');
-            incident.className = 'p-3 bg-rose-950/60 border border-rose-800 rounded text-xs flex justify-between items-center';
-            incident.innerHTML = `
-                <div>
-                    <div class="font-bold text-accentRed">${service}</div>
-                    <div class="text-[10px] text-slate-400">P99 Latency Spike: <span class="text-white font-mono font-bold">${latency}ms</span></div>
-                </div>
-                <div class="font-mono text-[10px] text-slate-400">${time}</div>
-            `;
-
-            container.prepend(incident);
-            if (container.children.length > 5) container.removeChild(container.lastChild);
-        }
-
-        // Initial Start & Poll Interval
-        refreshTelemetry();
-        setInterval(refreshTelemetry, 3000);
-    </script>
+    document.getElementById('toggle-btn').addEventListener('click', toggleAnomaly);
+    refreshAnomalyStatus();
+    refreshTelemetry();
+    setInterval(refreshTelemetry, 3000);
+    setInterval(refreshAnomalyStatus, 10000);
+  </script>
 </body>
 </html>

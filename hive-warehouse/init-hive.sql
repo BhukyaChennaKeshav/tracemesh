@@ -1,6 +1,8 @@
 CREATE DATABASE IF NOT EXISTS tracemesh_db;
 USE tracemesh_db;
 
+-- Spark writes a flat Parquet directory. Keep this schema in the same
+-- column order/names as SparkStreamingApp's output.
 CREATE EXTERNAL TABLE IF NOT EXISTS service_latency_metrics (
     window_start STRING,
     window_end STRING,
@@ -12,5 +14,3 @@ CREATE EXTERNAL TABLE IF NOT EXISTS service_latency_metrics (
 )
 STORED AS PARQUET
 LOCATION 'hdfs://namenode:9000/user/hive/warehouse/tracemesh_metrics';
-
-ALTER TABLE service_latency_metrics SET TBLPROPERTIES ("discover.partitions"="true");
