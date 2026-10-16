@@ -3,11 +3,15 @@ server:
 
 spring:
   kafka:
-    bootstrap-servers: kafka:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
 tracemesh:
   kafka:
-    topic: telemetry-spans
+    topic: ${KAFKA_TOPIC:telemetry-spans}
+  hive:
+    jdbc-url: "${HIVE_JDBC_URL:jdbc:hive2://hive-server:10000/tracemesh_db}"
+  producer:
+    interval-ms: ${TRACE_INTERVAL_MS:10}
