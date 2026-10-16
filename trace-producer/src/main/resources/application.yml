@@ -2,12 +2,43 @@ server:
   port: 8081
 
 spring:
+  # The 10ms span generator and the window ticker shouldn't share a single scheduler thread
+  task:
+    scheduling:
+      pool:
+        size: 4
   kafka:
     bootstrap-servers: kafka:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    # Dashboard consumer: tails the same topic Spark reads, in its own consumer group,
+    # so the UI gets live window metrics without waiting on the HDFS/Hive sink.
+    consumer:
+      group-id: tracemesh-dashboard
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.tracemesh.producer.model
+        spring.json.value.default.type: com.tracemesh.producer.model.TraceSpan
 
 tracemesh:
   kafka:
     topic: telemetry-spans
+  sla:
+    p99-threshold-ms: 1000
+  # Same shape as the Spark job: 10s windows sliding every 5s
+  window:
+    size-seconds: 10
+    slide-seconds: 5
+    history-points: 360
+  hive:
+    jdbc-url: jdbc:hive2://hive-server:10000/default
+    user: hive
+    driver-jar: /app/lib/hive-jdbc-standalone.jar
+  pipeline:
+    spark-master-url: http://spark-master:8080
+    namenode-url: http://namenode:9870
+    hive-host: hive-server
+    hive-port: 10000

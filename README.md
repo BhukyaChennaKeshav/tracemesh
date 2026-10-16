@@ -64,8 +64,41 @@ Force the `payment-service` to breach its SLA (spiking latency from ~50ms to >20
 curl -X POST "http://localhost:8081/api/anomaly/toggle?enable=true"
 ```
 
-**3. Identify the bottleneck via Hive:**
+**3. Open the dashboard:** [http://localhost:3000](http://localhost:3000)
+
+The React dashboard (`frontend/`) shows live P99 per service, the SLA breach log, a live span tail, Hive warehouse analytics, and the health of every pipeline stage. The anomaly can be injected from the UI into any service.
+
+**4. Identify the bottleneck via Hive:**
 ```bash
 # Execute the SLA violation query against the data warehouse
 docker exec -it hive-server hive -f /workspace/queries/01_detect_sla_violations.sql
 ```
+## 📊 Dashboard & API
+
+```text
+[React dashboard :3000] ──nginx /api──▶ [trace-producer :8081]
+                                          ├─ live: tails Kafka (own consumer group), 10s/5s windows in memory
+                                          ├─ history: Hive JDBC → tracemesh_db.service_latency_metrics
+                                          └─ health: probes Kafka, Spark master, HDFS NameNode, HiveServer2
+```
+
+| Endpoint | Description |
+|---|---|
+| `GET  /api/metrics/live` | Current window per service (P99, avg, spans, 5xx, breach flag) plus cluster KPIs |
+| `GET  /api/metrics/history?points=120` | P99 per service for each 5s tick |
+| `GET  /api/stream` | Server-sent events: a `snapshot` every tick and on every anomaly toggle |
+| `GET  /api/incidents` | SLA breaches (open on first window over SLA, resolve on first window back under) |
+| `GET  /api/spans/recent?limit=50&service=` | Latest raw spans from Kafka |
+| `POST /api/anomaly/toggle?enable=true&service=payment-service` | Inject latency (`service` optional, defaults to payment-service) |
+| `GET  /api/anomaly/status` | Anomaly state |
+| `GET  /api/warehouse/queries` | The three warehouse queries |
+| `GET  /api/warehouse/queries/{id}?service=` | Run `sla-violations`, `service-trend` or `historical-summary` on Hive |
+| `GET  /api/pipeline/health` | Status of each pipeline stage |
+
+The SLA threshold (default 1000 ms) and window sizes are in `trace-producer/src/main/resources/application.yml`.
+
+**Frontend dev mode** (hot reload against the backend on :8081):
+```bash
+cd frontend && npm install && npm run dev
+```
+Then open http://localhost:5173.

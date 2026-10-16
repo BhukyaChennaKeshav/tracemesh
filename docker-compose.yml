@@ -30,6 +30,8 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      # Heap caps keep the whole 10-container stack within a laptop-sized Docker VM
+      KAFKA_HEAP_OPTS: '-Xms256m -Xmx512m'
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
@@ -40,6 +42,8 @@ services:
     image: apache/spark:3.5.0
     container_name: spark-master
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_DAEMON_MEMORY: 256m
     ports:
       - "8080:8080"
       - "7077:7077"
@@ -51,6 +55,10 @@ services:
     image: apache/spark:3.5.0
     container_name: spark-worker
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      SPARK_DAEMON_MEMORY: 256m
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_WORKER_CORES: '2'
     depends_on:
       - spark-master
     networks:
@@ -66,6 +74,7 @@ services:
     environment:
       - CLUSTER_NAME=tracemesh
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HADOOP_HEAPSIZE_MAX=512m
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
     networks:
@@ -78,6 +87,7 @@ services:
     environment:
       - CLUSTER_NAME=tracemesh
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HADOOP_HEAPSIZE_MAX=384m
     volumes:
       - hadoop_datanode:/hadoop/dfs/data
     depends_on:
@@ -114,6 +124,7 @@ services:
       HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName: "hive"
       HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword: "hivepassword"
       HIVE_SITE_CONF_datanucleus_schema_autoCreateAll: "true"
+      HADOOP_HEAPSIZE: "768"
     ports:
       - "10000:10000"
     volumes:
@@ -126,11 +137,26 @@ services:
     build:
       context: ./trace-producer
     container_name: trace-producer
+    environment:
+      JAVA_TOOL_OPTIONS: '-Xmx384m'
     ports:
       - "8081:8081"
     depends_on:
       - kafka
     restart: on-failure
+    networks:
+      - tracemesh-net
+
+  # 10. Dashboard (React, served by nginx; proxies /api to trace-producer)
+  frontend:
+    build:
+      context: ./frontend
+    container_name: tracemesh-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - trace-producer
+    restart: unless-stopped
     networks:
       - tracemesh-net
 

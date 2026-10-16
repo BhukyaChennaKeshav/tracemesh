@@ -15,4 +15,6 @@ COPY --from=build /app/target/spark-streaming-job-1.0-SNAPSHOT.jar /app/job.jar
 CMD ["sh", "-c", "sleep 25 && /opt/spark/bin/spark-submit \
     --class com.tracemesh.spark.SparkStreamingApp \
     --master spark://spark-master:7077 \
+    --driver-memory 768m \
+    --conf spark.sql.shuffle.partitions=6 \
     /app/job.jar"]
