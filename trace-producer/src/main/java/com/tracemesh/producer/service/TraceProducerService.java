@@ -8,23 +8,24 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 public class TraceProducerService {
 
     private final KafkaTemplate<String, TraceSpan> kafkaTemplate;
-    private final Random random = new Random();
-    
+
     private final List<String> services = List.of(
-        "auth-service", "order-service", "payment-service", "inventory-service", "notification-service"
+            "auth-service", "order-service", "payment-service",
+            "inventory-service", "notification-service"
     );
 
     @Value("${tracemesh.kafka.topic}")
     private String topicName;
 
-    private boolean anomalyActive = false;
+    // The controller writes this flag while the scheduler reads it on another thread.
+    private volatile boolean anomalyActive = false;
 
     public TraceProducerService(KafkaTemplate<String, TraceSpan> kafkaTemplate) {
         this.kafkaTemplate = kafkaTemplate;
@@ -38,28 +39,26 @@ public class TraceProducerService {
         return anomalyActive;
     }
 
-    @Scheduled(fixedRate = 10) // Emits ~100 logs/sec
+    @Scheduled(fixedRateString = "${tracemesh.producer.interval-ms:10}")
     public void generateAndSendTrace() {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
         String service = services.get(random.nextInt(services.size()));
-        long duration;
 
-        // Inject high latency on payment-service when anomaly toggle is ON
+        long duration;
         if (anomalyActive && "payment-service".equals(service)) {
-            duration = 1500 + random.nextInt(2000); // 1500ms - 3500ms spike
+            duration = 1500 + random.nextInt(2000);
         } else {
-            duration = 20 + random.nextInt(150);    // 20ms - 170ms normal
+            duration = 20 + random.nextInt(150);
         }
 
-        int statusCode = (duration > 2000) ? 504 : 200;
-        String timestamp = Instant.now().toString();
-
+        int statusCode = duration > 2000 ? 504 : 200;
         TraceSpan span = new TraceSpan(
-            service,
-            UUID.randomUUID().toString(),
-            UUID.randomUUID().toString(),
-            timestamp,
-            duration,
-            statusCode
+                service,
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                Instant.now().toString(),
+                duration,
+                statusCode
         );
 
         kafkaTemplate.send(topicName, service, span);
